@@ -41,11 +41,23 @@ const stats = [
 
 type Row = Record<string, string | number | null>
 
+type PendingItem = {
+  分析编号?: string
+  目标指标?: string
+  status?: string
+  贡献度排名?: string
+  当前权重版本?: string
+  关联批次?: string
+  增量明细?: Row[]
+}
+
 export default function MetricdrillView() {
   const [rows, setRows] = useState<Row[]>([])
   const [total, setTotal] = useState(0)
   const [errorMessage, setErrorMessage] = useState('')
   const [filters, setFilters] = useState<Record<string, string>>({})
+  const [listCode, setListCode] = useState('')
+  const [pendingItems, setPendingItems] = useState<PendingItem[]>([])
   const filterFields = useMemo(() => columns.slice(0, 3), [])
 
   const reload = useCallback(async () => {
@@ -59,14 +71,28 @@ export default function MetricdrillView() {
       const payload = await response.json()
       setRows(payload.items ?? [])
       setTotal(payload.total ?? 0)
+      setListCode(payload['清单核验码'] ?? '')
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '指标归因列表读取失败')
     }
   }, [filters])
 
+  const reloadPending = useCallback(async () => {
+    try {
+      const response = await request(`${ENDPOINT}/pending-details`)
+      if (response.ok) {
+        const payload = await response.json()
+        setPendingItems(payload.items ?? [])
+      }
+    } catch {
+      // 待处理明细读取失败不打断主列表
+    }
+  }, [])
+
   useEffect(() => {
     void reload()
-  }, [reload])
+    void reloadPending()
+  }, [reload, reloadPending])
 
   async function runAction(action: string, row: Row) {
     setErrorMessage('')
@@ -79,6 +105,7 @@ export default function MetricdrillView() {
         throw new Error('指标归因动作未生效，请稍后重试')
       }
       await reload()
+      await reloadPending()
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : '指标归因操作失败')
     }
@@ -153,8 +180,51 @@ export default function MetricdrillView() {
         </tbody>
       </table>
 
+      <section className="recalc-panel">
+        <h3>指标下钻待处理明细</h3>
+        <p className="page-desc">
+          归因增量明细数据集已投递、尚未确认的归因分析；仅引用变化权重的下钻路径被更新，未受影响指标保持当前根因。
+        </p>
+        {pendingItems.map((item) => (
+          <article key={String(item.分析编号)} className="pending-item">
+            <header>
+              <strong>{item.分析编号}</strong> · {item.目标指标} · 状态 {item.status} ·
+              当前权重版本 {item.当前权重版本 ?? '—'} · 关联批次 {item.关联批次 ?? '—'}
+            </header>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>明细编号</th><th>下钻路径</th><th>直接贡献率</th><th>间接贡献率</th>
+                  <th>排名</th><th>权重版本</th><th>重算窗口</th><th>应用状态</th><th>追溯号</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(item.增量明细 ?? []).map((row) => (
+                  <tr key={String(row.id)}>
+                    <td>{row['明细编号'] ?? '—'}</td>
+                    <td>{row['维度下钻路径'] ?? '—'}</td>
+                    <td>{row['直接贡献率'] === '' ? '—' : row['直接贡献率'] ?? '—'}</td>
+                    <td>{row['间接贡献率'] === '' ? '—' : row['间接贡献率'] ?? '—'}</td>
+                    <td>{row['贡献度排名'] === '' ? '—' : row['贡献度排名'] ?? '—'}</td>
+                    <td>{row['权重版本'] ?? '—'}</td>
+                    <td>{row['重算窗口'] ?? '—'}</td>
+                    <td>{row['应用状态'] ?? '—'}</td>
+                    <td>{row['追溯号'] ?? '—'}</td>
+                  </tr>
+                ))}
+                {(item.增量明细 ?? []).length === 0 && (
+                  <tr><td className="empty-state" colSpan={9}>暂无关联的归因增量明细</td></tr>
+                )}
+              </tbody>
+            </table>
+          </article>
+        ))}
+        {pendingItems.length === 0 && <p className="page-desc">暂无待处理明细</p>}
+      </section>
+
       <footer className="page-foot">
         <span>共 {total} 条指标归因记录</span>
+        {listCode && <span>清单核验码 {listCode}</span>}
         {errorMessage && <span className="error-text">{errorMessage}</span>}
       </footer>
     </section>
